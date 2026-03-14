@@ -7,6 +7,37 @@ use nom::{
     multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded},
 };
+use std::fmt;
+
+macro_rules! path_segment {
+    ($name:literal) => {
+        PathSegment {
+            name: PathSegmentName::Identifier($name),
+            generic_args: None,
+        }
+    };
+    ($name:literal, $generic_args:pat) => {
+        PathSegment {
+            name: PathSegmentName::Identifier($name),
+            generic_args: Some($generic_args),
+        }
+    };
+}
+
+macro_rules! synthetic_path_segment {
+    ($name:literal) => {
+        PathSegment {
+            name: PathSegmentName::Synthetic($name),
+            generic_args: None,
+        }
+    };
+    ($name:literal, $generic_args:pat) => {
+        PathSegment {
+            name: PathSegmentName::Synthetic($name),
+            generic_args: Some($generic_args),
+        }
+    };
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Token<'a> {
@@ -154,6 +185,30 @@ impl Token<'_> {
             1
         })
     }
+
+    pub fn erase_result_ok_type(&mut self) -> usize {
+        self.apply(&mut |token| {
+            let Token::Path { segments } = token else {
+                return 0;
+            };
+
+            let [
+                path_segment!("core"),
+                path_segment!("result"),
+                path_segment!("Result", generic_args),
+            ] = segments.as_mut_slice()
+            else {
+                return 0;
+            };
+
+            let [ok, _err] = generic_args.as_mut_slice() else {
+                return 0;
+            };
+
+            *token = std::mem::replace(ok, Token::Unit);
+            1
+        })
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -162,13 +217,24 @@ pub struct PathSegment<'a> {
     pub generic_args: Option<Vec<Token<'a>>>,
 }
 
+impl<'a> PathSegment<'a> {
+    pub fn ident(&self) -> Option<&'a str> {
+        match self.name {
+            PathSegmentName::Identifier(name) => Some(name),
+            PathSegmentName::Synthetic(_) => None,
+        }
+    }
+
+    pub fn is_ident(&self, expected: &str) -> bool {
+        self.ident() == Some(expected)
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PathSegmentName<'a> {
     Identifier(&'a str),
     Synthetic(&'a str),
 }
-
-use std::fmt;
 
 impl fmt::Display for Token<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -513,8 +579,18 @@ mod tests {
         let t = r#"
             <indexmap::map::IndexMap<gsym::types::FileInfo, ()>>::insert_full
         "#;
+        roundtrip(t)?;
 
-        roundtrip(t)
+        let (_, mut token) = parse(t)?;
+        token.erase_trait_names();
+        token.downgrade_qpath();
+
+        assert_eq!(
+            format!("{token}"),
+            "indexmap::map::IndexMap<gsym::types::FileInfo, ()>::insert_full"
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -545,8 +621,10 @@ mod tests {
         token.erase_trait_names();
         token.downgrade_qpath();
 
-        println!("\n-------\n{:#?}", token);
-        println!("{token}");
+        assert_eq!(
+            format!("{token}"),
+            "symblib::symbconv::dwarf::Extractor::extract"
+        );
 
         Ok(())
     }
@@ -628,7 +706,7 @@ core
         >::{closure#2}
     >::{closure#0}
 >
-        ";
+        "#;
 
         roundtrip(t)
     }
@@ -691,7 +769,25 @@ rayon_core
 ::{closure#0}
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_trait_names();
+        token.downgrade_qpath();
+        token.erase_result_ok_type();
+
+        assert_eq!(
+            format!("{token}"),
+            "rayon_core::scope::scope<\
+                svclib::taskutil::ThreadPool::spawn<\
+                    symdb::symdb::SymDb::fetch_from_debuginfod::{closure#0}::{closure#0}::{closure#0}::{closure#0}, \
+                    gsym::writer::Writer, \
+                    anyhow::Error\
+                >::{closure#0}::{closure#0}::{closure#0}, gsym::writer::Writer\
+            >::{closure#0}"
+        );
+
+        Ok(())
     }
 
     #[test]
