@@ -79,14 +79,14 @@ pub enum Token<'a> {
 }
 
 impl Token<'_> {
-    fn apply(&mut self, fun: &mut impl FnMut(&mut Self) -> usize) -> usize {
+    fn visit(&mut self, fun: &mut impl FnMut(&mut Self) -> usize) -> usize {
         let mut count = 0;
         match self {
             Token::Path { segments } => {
                 for segment in segments {
                     if let Some(generic_args) = &mut segment.generic_args {
                         for arg in generic_args {
-                            count += arg.apply(fun);
+                            count += arg.visit(fun);
                         }
                     }
                 }
@@ -97,16 +97,16 @@ impl Token<'_> {
                 trait_path,
                 associated_segments,
             } => {
-                count += qualified_type.apply(fun);
+                count += qualified_type.visit(fun);
 
                 if let Some(trait_path) = trait_path {
-                    count += trait_path.apply(fun);
+                    count += trait_path.visit(fun);
                 }
 
                 for segment in associated_segments {
                     if let Some(generic_args) = &mut segment.generic_args {
                         for arg in generic_args {
-                            count += arg.apply(fun);
+                            count += arg.visit(fun);
                         }
                     }
                 }
@@ -114,30 +114,30 @@ impl Token<'_> {
 
             Token::Tuple { elements } => {
                 for element in elements {
-                    count += element.apply(fun);
+                    count += element.visit(fun);
                 }
             }
 
             Token::Slice { element } => {
-                count += element.apply(fun);
+                count += element.visit(fun);
             }
 
             Token::Reference { inner, .. } => {
-                count += inner.apply(fun);
+                count += inner.visit(fun);
             }
 
             Token::DynamicTraitObject {
                 principal_trait,
                 additional_traits,
             } => {
-                count += principal_trait.apply(fun);
+                count += principal_trait.visit(fun);
                 for additional_trait in additional_traits {
-                    count += additional_trait.apply(fun);
+                    count += additional_trait.visit(fun);
                 }
             }
 
             Token::AssociatedTypeBinding { value, .. } => {
-                count += value.apply(fun);
+                count += value.visit(fun);
             }
 
             Token::Unit => {}
@@ -146,7 +146,7 @@ impl Token<'_> {
         count + fun(self)
     }
 
-    fn apply_segments(
+    fn visit_segments(
         &mut self,
         fun: &mut impl FnMut(&mut Vec<PathSegment<'_>>) -> usize,
     ) -> usize {
@@ -159,7 +159,7 @@ impl Token<'_> {
             for segment in segments.iter_mut() {
                 if let Some(generic_args) = &mut segment.generic_args {
                     for arg in generic_args {
-                        count += arg.apply_segments(fun);
+                        count += arg.visit_segments(fun);
                     }
                 }
             }
@@ -175,10 +175,10 @@ impl Token<'_> {
                 associated_segments,
             } => {
                 let mut count = 0;
-                count += qualified_type.apply_segments(fun);
+                count += qualified_type.visit_segments(fun);
 
                 if let Some(trait_path) = trait_path {
-                    count += trait_path.apply_segments(fun);
+                    count += trait_path.visit_segments(fun);
                 }
 
                 count + apply_segment_generics(associated_segments, fun)
@@ -186,30 +186,30 @@ impl Token<'_> {
             Token::Tuple { elements } => {
                 let mut count = 0;
                 for element in elements {
-                    count += element.apply_segments(fun);
+                    count += element.visit_segments(fun);
                 }
                 count
             }
-            Token::Slice { element } => element.apply_segments(fun),
-            Token::Reference { inner, .. } => inner.apply_segments(fun),
+            Token::Slice { element } => element.visit_segments(fun),
+            Token::Reference { inner, .. } => inner.visit_segments(fun),
             Token::DynamicTraitObject {
                 principal_trait,
                 additional_traits,
             } => {
                 let mut count = 0;
-                count += principal_trait.apply_segments(fun);
+                count += principal_trait.visit_segments(fun);
                 for additional_trait in additional_traits {
-                    count += additional_trait.apply_segments(fun);
+                    count += additional_trait.visit_segments(fun);
                 }
                 count
             }
-            Token::AssociatedTypeBinding { value, .. } => value.apply_segments(fun),
+            Token::AssociatedTypeBinding { value, .. } => value.visit_segments(fun),
             Token::Unit => 0,
         }
     }
 
     pub fn erase_trait_names(&mut self) -> usize {
-        self.apply(&mut |token| {
+        self.visit(&mut |token| {
             if let Token::QualifiedPath { trait_path, .. } = token {
                 trait_path.take();
                 1
@@ -220,7 +220,7 @@ impl Token<'_> {
     }
 
     pub fn downgrade_qpath(&mut self) -> usize {
-        self.apply(&mut |token| {
+        self.visit(&mut |token| {
             let Token::QualifiedPath {
                 trait_path,
                 qualified_type,
@@ -247,8 +247,8 @@ impl Token<'_> {
         })
     }
 
-    pub fn erase_result_ok_type(&mut self) -> usize {
-        self.apply(&mut |token| {
+    pub fn unwrap_result(&mut self) -> usize {
+        self.visit(&mut |token| {
             let Token::Path { segments } = token else {
                 return 0;
             };
@@ -267,6 +267,26 @@ impl Token<'_> {
         })
     }
 
+    pub fn unwrap_option(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let Token::Path { segments } = token else {
+                return 0;
+            };
+
+            let [ps!("core"), ps!("option"), ps!("Option", generic_args)] = segments.as_mut_slice()
+            else {
+                return 0;
+            };
+
+            let [inner] = generic_args.as_mut_slice() else {
+                return 0;
+            };
+
+            *token = std::mem::replace(inner, Token::Unit);
+            1
+        })
+    }
+
     pub fn collapse_closures(&mut self) -> usize {
         fn idx<'a>(segment: &'a PathSegment<'a>) -> Option<&'a str> {
             let PathSegmentName::Synthetic(name) = &segment.name else {
@@ -276,7 +296,7 @@ impl Token<'_> {
             name.strip_prefix("closure#")
         }
 
-        self.apply_segments(&mut |segments| {
+        self.visit_segments(&mut |segments| {
             let mut changed = 0;
             let mut left = 0;
 
@@ -318,6 +338,14 @@ impl Token<'_> {
 
             changed
         })
+    }
+
+    pub fn erase_all(&mut self) -> usize {
+        self.erase_trait_names()
+            + self.downgrade_qpath()
+            + self.unwrap_result()
+            + self.unwrap_option()
+            + self.collapse_closures()
     }
 }
 
@@ -660,7 +688,17 @@ mod tests {
             <gsym::writer::Writer>::insert_file::<&str, &str>
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_all();
+
+        assert_eq!(
+            format!("{token}"),
+            "gsym::writer::Writer::insert_file<&str, &str>"
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -888,7 +926,7 @@ rayon_core
         let (_, mut token) = parse(t)?;
         token.erase_trait_names();
         token.downgrade_qpath();
-        token.erase_result_ok_type();
+        token.unwrap_result();
         token.collapse_closures();
 
         assert_eq!(
@@ -1104,5 +1142,18 @@ core
         "#;
 
         roundtrip(t)
+    }
+
+    #[test]
+    fn erase_option_type_test() -> TestResult {
+        let t = r#"
+            core::option::Option<core::num::nonzero::NonZero<u64>>
+        "#;
+
+        let (_, mut token) = parse(t)?;
+        token.unwrap_option();
+
+        assert_eq!(format!("{token}"), "core::num::nonzero::NonZero<u64>");
+        Ok(())
     }
 }
