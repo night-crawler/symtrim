@@ -454,6 +454,147 @@ impl Token<'_> {
         })
     }
 
+    fn erase_path_prefix(segments: &mut Vec<PathSegment<'_>>) -> bool {
+        fn matches_path(segments: &[PathSegment<'_>], expected: &[&str]) -> bool {
+            segments.len() == expected.len()
+                && segments
+                    .iter()
+                    .zip(expected)
+                    .all(|(segment, expected)| segment.is_ident(expected))
+        }
+
+        fn strip_prefix(segments: &mut Vec<PathSegment<'_>>) -> bool {
+            if segments.len() <= 1 {
+                return false;
+            }
+
+            segments.drain(..segments.len() - 1);
+            true
+        }
+
+        let Some(last) = segments.last().and_then(PathSegment::ident) else {
+            return false;
+        };
+
+        let matched = match last {
+            "Vec" => {
+                matches_path(segments, &["std", "vec", "Vec"])
+                    || matches_path(segments, &["alloc", "vec", "Vec"])
+            }
+
+            "String" => {
+                matches_path(segments, &["std", "string", "String"])
+                    || matches_path(segments, &["alloc", "string", "String"])
+            }
+
+            "str" => matches_path(segments, &["core", "primitive", "str"]),
+
+            "Option" => {
+                matches_path(segments, &["std", "option", "Option"])
+                    || matches_path(segments, &["core", "option", "Option"])
+            }
+
+            "Result" => {
+                matches_path(segments, &["std", "result", "Result"])
+                    || matches_path(segments, &["core", "result", "Result"])
+            }
+
+            "Box" => {
+                matches_path(segments, &["std", "boxed", "Box"])
+                    || matches_path(segments, &["alloc", "boxed", "Box"])
+            }
+
+            "HashMap" => matches_path(segments, &["std", "collections", "HashMap"]),
+            "HashSet" => matches_path(segments, &["std", "collections", "HashSet"]),
+            "BTreeMap" => matches_path(segments, &["std", "collections", "BTreeMap"]),
+            "BTreeSet" => matches_path(segments, &["std", "collections", "BTreeSet"]),
+            "VecDeque" => matches_path(segments, &["std", "collections", "VecDeque"]),
+            "BinaryHeap" => matches_path(segments, &["std", "collections", "BinaryHeap"]),
+            "LinkedList" => matches_path(segments, &["std", "collections", "LinkedList"]),
+
+            "Rc" => matches_path(segments, &["std", "rc", "Rc"]),
+            "Arc" => matches_path(segments, &["std", "sync", "Arc"]),
+
+            "Cell" => matches_path(segments, &["std", "cell", "Cell"]),
+            "RefCell" => matches_path(segments, &["std", "cell", "RefCell"]),
+            "UnsafeCell" => matches_path(segments, &["std", "cell", "UnsafeCell"]),
+
+            "Mutex" => matches_path(segments, &["std", "sync", "Mutex"]),
+            "RwLock" => matches_path(segments, &["std", "sync", "RwLock"]),
+            "OnceLock" => matches_path(segments, &["std", "sync", "OnceLock"]),
+            "LazyLock" => matches_path(segments, &["std", "sync", "LazyLock"]),
+
+            "Cow" => {
+                matches_path(segments, &["std", "borrow", "Cow"])
+                    || matches_path(segments, &["alloc", "borrow", "Cow"])
+            }
+
+            "Path" => matches_path(segments, &["std", "path", "Path"]),
+            "PathBuf" => matches_path(segments, &["std", "path", "PathBuf"]),
+
+            "OsStr" => matches_path(segments, &["std", "ffi", "OsStr"]),
+            "OsString" => matches_path(segments, &["std", "ffi", "OsString"]),
+            "CStr" => matches_path(segments, &["std", "ffi", "CStr"]),
+            "CString" => matches_path(segments, &["std", "ffi", "CString"]),
+
+            "Pin" => {
+                matches_path(segments, &["std", "pin", "Pin"])
+                    || matches_path(segments, &["core", "pin", "Pin"])
+            }
+
+            "Duration" => matches_path(segments, &["std", "time", "Duration"]),
+            "Instant" => matches_path(segments, &["std", "time", "Instant"]),
+            "SystemTime" => matches_path(segments, &["std", "time", "SystemTime"]),
+
+            "Range" => matches_path(segments, &["std", "ops", "Range"]),
+            "RangeInclusive" => matches_path(segments, &["std", "ops", "RangeInclusive"]),
+            "Bound" => matches_path(segments, &["std", "ops", "Bound"]),
+
+            "IpAddr" => matches_path(segments, &["std", "net", "IpAddr"]),
+            "Ipv4Addr" => matches_path(segments, &["std", "net", "Ipv4Addr"]),
+            "Ipv6Addr" => matches_path(segments, &["std", "net", "Ipv6Addr"]),
+            "SocketAddr" => matches_path(segments, &["std", "net", "SocketAddr"]),
+
+            "NonZeroUsize" => matches_path(segments, &["std", "num", "NonZeroUsize"]),
+            "NonZeroU64" => matches_path(segments, &["std", "num", "NonZeroU64"]),
+
+            "NonNull" => matches_path(segments, &["std", "ptr", "NonNull"]),
+            "PhantomData" => matches_path(segments, &["std", "marker", "PhantomData"]),
+            "MaybeUninit" => matches_path(segments, &["std", "mem", "MaybeUninit"]),
+
+            "Poll" => {
+                matches_path(segments, &["std", "task", "Poll"])
+                    || matches_path(segments, &["core", "task", "Poll"])
+            }
+
+            "Context" => {
+                matches_path(segments, &["std", "task", "Context"])
+                    || matches_path(segments, &["core", "task", "Context"])
+            }
+
+            "Waker" => {
+                matches_path(segments, &["std", "task", "Waker"])
+                    || matches_path(segments, &["core", "task", "Waker"])
+            }
+
+            "Future" => {
+                matches_path(segments, &["std", "future", "Future"])
+                    || matches_path(segments, &["core", "future", "future", "Future"])
+            }
+
+            "Sender" => matches_path(segments, &["std", "sync", "mpsc", "Sender"]),
+            "Receiver" => matches_path(segments, &["std", "sync", "mpsc", "Receiver"]),
+
+            _ => false,
+        };
+
+        matched && strip_prefix(segments)
+    }
+
+    pub fn erase_well_known_paths(&mut self) -> usize {
+        self.visit_segments(&mut |segments| usize::from(Self::erase_path_prefix(segments)))
+    }
+
     pub fn erase_all(&mut self) -> usize {
         self.erase_trait_names()
             + self.downgrade_qpath()
@@ -464,6 +605,7 @@ impl Token<'_> {
             + self.erase_trait_objects()
             + self.erase_single_type_binding()
             + self.unwrap_pin()
+            + self.erase_well_known_paths()
     }
 }
 
@@ -1330,7 +1472,10 @@ axum::util::MapIntoResponseFuture<
         let (_, mut token) = parse(t)?;
         token.erase_all();
 
-        println!("{}", token);
+        assert_eq!(
+            format!("{token}"),
+            "axum::util::MapIntoResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>::poll"
+        );
 
         Ok(())
     }
