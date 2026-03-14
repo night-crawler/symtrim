@@ -25,21 +25,6 @@ macro_rules! ps {
     };
 }
 
-macro_rules! sps {
-    ($name:literal) => {
-        PathSegment {
-            name: PathSegmentName::Synthetic(Cow::Borrowed($name)),
-            generic_args: None,
-        }
-    };
-    ($name:literal, $generic_args:pat) => {
-        PathSegment {
-            name: PathSegmentName::Synthetic(Cow::Borrowed($name)),
-            generic_args: Some($generic_args),
-        }
-    };
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Token<'a> {
     Path {
