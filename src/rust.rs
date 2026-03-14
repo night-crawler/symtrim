@@ -47,13 +47,112 @@ pub enum Token<'a> {
 }
 
 impl Token<'_> {
-    fn simplify(&mut self) {
+    fn apply(&mut self, fun: &mut impl FnMut(&mut Self) -> usize) -> usize {
+        let mut count = 0;
         match self {
-            Self::QualifiedPath { qualified_type, trait_path, associated_segments } => {
-                trait_path.take();
+            Token::Path { segments } => {
+                for segment in segments {
+                    if let Some(generic_args) = &mut segment.generic_args {
+                        for arg in generic_args {
+                            count += arg.apply(fun);
+                        }
+                    }
+                }
             }
-            _ => {}
+
+            Token::QualifiedPath {
+                qualified_type,
+                trait_path,
+                associated_segments,
+            } => {
+                count += qualified_type.apply(fun);
+
+                if let Some(trait_path) = trait_path {
+                    count += trait_path.apply(fun);
+                }
+
+                for segment in associated_segments {
+                    if let Some(generic_args) = &mut segment.generic_args {
+                        for arg in generic_args {
+                            count += arg.apply(fun);
+                        }
+                    }
+                }
+            }
+
+            Token::Tuple { elements } => {
+                for element in elements {
+                    count += element.apply(fun);
+                }
+            }
+
+            Token::Slice { element } => {
+                count += element.apply(fun);
+            }
+
+            Token::Reference { inner, .. } => {
+                count += inner.apply(fun);
+            }
+
+            Token::DynamicTraitObject {
+                principal_trait,
+                additional_traits,
+            } => {
+                count += principal_trait.apply(fun);
+                for additional_trait in additional_traits {
+                    count += additional_trait.apply(fun);
+                }
+            }
+
+            Token::AssociatedTypeBinding { value, .. } => {
+                count += value.apply(fun);
+            }
+
+            Token::Unit => {}
         }
+
+        count += fun(self);
+
+        count
+    }
+
+    pub fn erase_trait_names(&mut self) -> usize {
+        self.apply(&mut |token| {
+            if let Token::QualifiedPath { trait_path, .. } = token {
+                trait_path.take();
+                1
+            } else {
+                0
+            }
+        })
+    }
+
+    pub fn downgrade_qpath(&mut self) -> usize {
+        self.apply(&mut |token| {
+            let Token::QualifiedPath {
+                trait_path,
+                qualified_type,
+                associated_segments,
+            } = token
+            else {
+                return 0;
+            };
+
+            if trait_path.is_some() {
+                return 0;
+            }
+
+            let Token::Path { segments } = qualified_type.as_mut() else {
+                return 0;
+            };
+
+            segments.append(associated_segments);
+
+            let segments = std::mem::take(segments);
+            *token = Token::Path { segments };
+
+            1
+        })
     }
 }
 
@@ -68,7 +167,6 @@ pub enum PathSegmentName<'a> {
     Identifier(&'a str),
     Synthetic(&'a str),
 }
-
 
 use std::fmt;
 
@@ -444,10 +542,11 @@ mod tests {
         roundtrip(t)?;
 
         let (_, mut token) = parse(t)?;
-        token.simplify();
+        token.erase_trait_names();
+        token.downgrade_qpath();
 
+        println!("\n-------\n{:#?}", token);
         println!("{token}");
-
 
         Ok(())
     }
