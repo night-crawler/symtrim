@@ -89,7 +89,7 @@ def pretty_rust_path(s: str, indent: str = "    ") -> str:
 
 if __name__ == "__main__":
     s = r"""
-    <axum::util::MapIntoResponseFuture<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<http::response::Response<tonic::body::Body>, core::convert::Infallible>> + core::marker::Send>>> as core::future::future::Future>::poll
+    tonic::transport::server::SvcFuture<tonic::service::recover_error::ResponseFuture<tower::util::either::EitherResponseFuture<tower::load_shed::future::ResponseFuture<tower::util::either::EitherResponseFuture<tower::limit::concurrency::future::ResponseFuture<tonic::transport::service::grpc_timeout::ResponseFuture<tower::limit::concurrency::future::ResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>>>, tonic::transport::service::grpc_timeout::ResponseFuture<tower::limit::concurrency::future::ResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>>>>, tower::util::either::EitherResponseFuture<tower::limit::concurrency::future::ResponseFuture<tonic::transport::service::grpc_timeout::ResponseFuture<tower::limit::concurrency::future::ResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>>>, tonic::transport::service::grpc_timeout::ResponseFuture<tower::limit::concurrency::future::ResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>>>>>>::poll
     """
 
     print(pretty_rust_path(s))

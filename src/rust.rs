@@ -595,6 +595,37 @@ impl Token<'_> {
         self.visit_segments(&mut |segments| usize::from(Self::erase_path_prefix(segments)))
     }
 
+    fn is_placeholder_type(&self) -> bool {
+        let Token::Path { segments } = self else {
+            return false;
+        };
+
+        matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generic_args.is_none())
+    }
+
+    pub fn erase_placeholder_generics(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let Token::Path { segments } = token else {
+                return 0;
+            };
+
+            let mut changed = 0;
+
+            for segment in segments {
+                let Some(generic_args) = &segment.generic_args else {
+                    continue;
+                };
+
+                if matches!(generic_args.as_slice(), [arg] if arg.is_placeholder_type()) {
+                    segment.generic_args = None;
+                    changed += 1;
+                }
+            }
+
+            changed
+        })
+    }
+
     pub fn erase_all(&mut self) -> usize {
         self.erase_trait_names()
             + self.downgrade_qpath()
@@ -606,6 +637,7 @@ impl Token<'_> {
             + self.erase_single_type_binding()
             + self.unwrap_pin()
             + self.erase_well_known_paths()
+            + self.erase_placeholder_generics()
     }
 }
 
@@ -1401,7 +1433,14 @@ core
 ::poll
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_all();
+
+        println!("{token}");
+
+        Ok(())
     }
 
     #[test]
@@ -1475,6 +1514,39 @@ axum::util::MapIntoResponseFuture<
         assert_eq!(
             format!("{token}"),
             "axum::util::MapIntoResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>::poll"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn other_sample() -> TestResult {
+        let t = r#"
+<
+    <
+        zt::symdb::v1::sym_db_server::SymDbServer<
+            _
+        > as tower_service::Service<
+            http::request::Request<
+                _
+            >
+        >
+    >::call::FetchGlobalBinariesSvc<
+        symdb::grpc::ServiceImpl
+    > as tonic::server::service::UnaryService<
+        zt::symdb::v1::FetchGlobalBinariesRequest
+    >
+>
+::call
+::{closure#0}
+        "#;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_all();
+
+        assert_eq!(
+            format!("{token}"),
+            "zt::symdb::v1::sym_db_server::SymDbServer::call::FetchGlobalBinariesSvc<symdb::grpc::ServiceImpl>::call::{closure#0}"
         );
 
         Ok(())
