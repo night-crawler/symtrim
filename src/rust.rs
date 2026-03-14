@@ -965,13 +965,13 @@ mod tests {
     use super::*;
     use testresult::TestResult;
 
-    fn roundtrip(s: &str) -> TestResult {
+    fn roundtrip(s: &str) -> TestResult<usize> {
         let (_, token) = parse(s)?;
         let repr = token.to_string();
         println!("{token:#?}");
         let token2 = parse(repr.as_str())?.1;
         assert_eq!(token, token2, "Not equal: `{:?}` vs `{:?}`", token, token2);
-        Ok(())
+        Ok(token.to_string().len())
     }
 
     #[test]
@@ -1015,7 +1015,9 @@ mod tests {
 ::{shim:vtable#0}
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        Ok(())
     }
 
     #[test]
@@ -1050,7 +1052,9 @@ mod tests {
 ::next_entry
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        Ok(())
     }
 
     #[test]
@@ -1152,7 +1156,9 @@ core
 >
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        Ok(())
     }
 
     #[test]
@@ -1186,7 +1192,9 @@ core
 ::next
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        Ok(())
     }
 
     #[test]
@@ -1342,7 +1350,9 @@ core
 >
         "#;
 
-        roundtrip(t)
+        roundtrip(t)?;
+
+        Ok(())
     }
 
     #[test]
@@ -1433,10 +1443,13 @@ core
 ::poll
         "#;
 
-        roundtrip(t)?;
+        let initial_size = roundtrip(t)? as f64;
 
         let (_, mut token) = parse(t)?;
         token.erase_all();
+
+        let ratio = token.to_string().len() as f64 / initial_size;
+        println!("{}", ratio);
 
         println!("{token}");
 
