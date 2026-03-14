@@ -346,26 +346,6 @@ impl Token<'_> {
         })
     }
 
-    fn is_marker_trait(&self) -> bool {
-        let Token::Path { segments } = self else {
-            return false;
-        };
-
-        let [prefix, marker, trait_name] = segments.as_slice() else {
-            return false;
-        };
-
-        if !matches!(prefix.ident(), Some("core" | "std")) {
-            return false;
-        }
-
-        if !marker.is_ident("marker") {
-            return false;
-        }
-
-        trait_name.generic_args.is_none()
-    }
-
     pub fn erase_marker_traits(&mut self) -> usize {
         self.visit(&mut |token| {
             let Token::DynamicTraitObject {
@@ -580,14 +560,6 @@ impl Token<'_> {
         self.visit_segments(&mut |segments| usize::from(Self::erase_path_prefix(segments)))
     }
 
-    fn is_placeholder_type(&self) -> bool {
-        let Token::Path { segments } = self else {
-            return false;
-        };
-
-        matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generic_args.is_none())
-    }
-
     pub fn erase_placeholder_generics(&mut self) -> usize {
         self.visit(&mut |token| {
             let Token::Path { segments } = token else {
@@ -623,6 +595,34 @@ impl Token<'_> {
             + self.unwrap_pin()
             + self.erase_well_known_paths()
             + self.erase_placeholder_generics()
+    }
+
+    fn is_marker_trait(&self) -> bool {
+        let Token::Path { segments } = self else {
+            return false;
+        };
+
+        let [prefix, marker, trait_name] = segments.as_slice() else {
+            return false;
+        };
+
+        if !matches!(prefix.ident(), Some("core" | "std")) {
+            return false;
+        }
+
+        if !marker.is_ident("marker") {
+            return false;
+        }
+
+        trait_name.generic_args.is_none()
+    }
+
+    fn is_placeholder_type(&self) -> bool {
+        let Token::Path { segments } = self else {
+            return false;
+        };
+
+        matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generic_args.is_none())
     }
 }
 
