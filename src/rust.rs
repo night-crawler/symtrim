@@ -394,6 +394,17 @@ impl Token<'_> {
         })
     }
 
+    pub fn erase_trait_objects(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let Token::DynamicTraitObject { principal_trait, .. } = token else {
+                return 0;
+            };
+
+            *token = std::mem::replace(principal_trait.as_mut(), Token::Unit);
+            1
+        })
+    }
+
     pub fn erase_all(&mut self) -> usize {
         self.erase_trait_names()
             + self.downgrade_qpath()
@@ -401,6 +412,7 @@ impl Token<'_> {
             + self.unwrap_option()
             + self.collapse_closures()
             + self.erase_marker_traits()
+            + self.erase_trait_objects()
     }
 }
 
@@ -1233,7 +1245,10 @@ core
         assert_eq!(
             format!("{token}"),
             "tracing::instrument::Instrumented<\
-                alloc::boxed::Box<dyn objstore::Bucket>::get_object_into_tempfile::{closures#{0,0}}>::poll"
+                alloc::boxed::Box<\
+                    objstore::Bucket\
+                >::get_object_into_tempfile::{closures#{0,0}}\
+            >::poll"
         );
 
         Ok(())
