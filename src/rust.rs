@@ -11,13 +11,13 @@ use std::borrow::Cow;
 use std::fmt;
 
 macro_rules! ps {
-    ($name:literal) => {
+    ($name:pat) => {
         PathSegment {
             name: PathSegmentName::Identifier(Cow::Borrowed($name)),
             generic_args: None,
         }
     };
-    ($name:literal, $generic_args:pat) => {
+    ($name:pat, $generic_args:pat) => {
         PathSegment {
             name: PathSegmentName::Identifier(Cow::Borrowed($name)),
             generic_args: Some($generic_args),
@@ -287,6 +287,27 @@ impl Token<'_> {
         })
     }
 
+    pub fn unwrap_pin(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let Token::Path { segments } = token else {
+                return 0;
+            };
+
+            let [ps!("core" | "std"), ps!("pin"), ps!("Pin", generic_args)] =
+                segments.as_mut_slice()
+            else {
+                return 0;
+            };
+
+            let [inner] = generic_args.as_mut_slice() else {
+                return 0;
+            };
+
+            *token = std::mem::replace(inner, Token::Unit);
+            1
+        })
+    }
+
     pub fn collapse_closures(&mut self) -> usize {
         fn idx<'a>(segment: &'a PathSegment<'a>) -> Option<&'a str> {
             let PathSegmentName::Synthetic(name) = &segment.name else {
@@ -396,12 +417,40 @@ impl Token<'_> {
 
     pub fn erase_trait_objects(&mut self) -> usize {
         self.visit(&mut |token| {
-            let Token::DynamicTraitObject { principal_trait, .. } = token else {
+            let Token::DynamicTraitObject {
+                principal_trait, ..
+            } = token
+            else {
                 return 0;
             };
 
             *token = std::mem::replace(principal_trait.as_mut(), Token::Unit);
             1
+        })
+    }
+
+    pub fn erase_single_type_binding(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let Token::Path { segments } = token else {
+                return 0;
+            };
+
+            let mut count = 0;
+            for segment in segments {
+                let Some(generic_args) = &mut segment.generic_args else {
+                    continue;
+                };
+
+                let [Token::AssociatedTypeBinding { value, .. }] = generic_args.as_mut_slice()
+                else {
+                    continue;
+                };
+
+                segment.generic_args = Some(vec![std::mem::replace(value.as_mut(), Token::Unit)]);
+                count += 1
+            }
+
+            count
         })
     }
 
@@ -413,6 +462,8 @@ impl Token<'_> {
             + self.collapse_closures()
             + self.erase_marker_traits()
             + self.erase_trait_objects()
+            + self.erase_single_type_binding()
+            + self.unwrap_pin()
     }
 }
 
@@ -1250,6 +1301,36 @@ core
                 >::get_object_into_tempfile::{closures#{0,0}}\
             >::poll"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn unwrap_future() -> TestResult {
+        let t = r#"
+        <
+axum::util::MapIntoResponseFuture<
+        core::pin::Pin<
+            alloc::boxed::Box<
+                dyn core::future::future::Future<
+                    Output = core::result::Result<
+                        http::response::Response<
+                            tonic::body::Body
+                        >,
+                         core::convert::Infallible
+                    >
+                > + core::marker::Send
+            >
+        >
+    > as core::future::future::Future
+>
+::poll
+        "#;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_all();
+
+        println!("{}", token);
 
         Ok(())
     }

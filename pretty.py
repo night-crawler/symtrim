@@ -89,7 +89,7 @@ def pretty_rust_path(s: str, indent: str = "    ") -> str:
 
 if __name__ == "__main__":
     s = r"""
-    <tracing::instrument::Instrumented<<alloc::boxed::Box<dyn objstore::Bucket + core::marker::Sync + core::marker::Send> as objstore::BucketExt>::get_object_into_tempfile::{closure#0}::{closure#0}> as core::future::future::Future>::poll
+    <axum::util::MapIntoResponseFuture<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = core::result::Result<http::response::Response<tonic::body::Body>, core::convert::Infallible>> + core::marker::Send>>> as core::future::future::Future>::poll
     """
 
     print(pretty_rust_path(s))
