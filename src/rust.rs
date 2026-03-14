@@ -7,33 +7,34 @@ use nom::{
     multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded},
 };
+use std::borrow::Cow;
 use std::fmt;
 
-macro_rules! path_segment {
+macro_rules! ps {
     ($name:literal) => {
         PathSegment {
-            name: PathSegmentName::Identifier($name),
+            name: PathSegmentName::Identifier(Cow::Borrowed($name)),
             generic_args: None,
         }
     };
     ($name:literal, $generic_args:pat) => {
         PathSegment {
-            name: PathSegmentName::Identifier($name),
+            name: PathSegmentName::Identifier(Cow::Borrowed($name)),
             generic_args: Some($generic_args),
         }
     };
 }
 
-macro_rules! synthetic_path_segment {
+macro_rules! sps {
     ($name:literal) => {
         PathSegment {
-            name: PathSegmentName::Synthetic($name),
+            name: PathSegmentName::Synthetic(Cow::Borrowed($name)),
             generic_args: None,
         }
     };
     ($name:literal, $generic_args:pat) => {
         PathSegment {
-            name: PathSegmentName::Synthetic($name),
+            name: PathSegmentName::Synthetic(Cow::Borrowed($name)),
             generic_args: Some($generic_args),
         }
     };
@@ -142,9 +143,69 @@ impl Token<'_> {
             Token::Unit => {}
         }
 
-        count += fun(self);
+        count + fun(self)
+    }
 
-        count
+    fn apply_segments(
+        &mut self,
+        fun: &mut impl FnMut(&mut Vec<PathSegment<'_>>) -> usize,
+    ) -> usize {
+        fn apply_segment_generics(
+            segments: &mut Vec<PathSegment<'_>>,
+            fun: &mut impl FnMut(&mut Vec<PathSegment<'_>>) -> usize,
+        ) -> usize {
+            let mut count = 0;
+
+            for segment in segments.iter_mut() {
+                if let Some(generic_args) = &mut segment.generic_args {
+                    for arg in generic_args {
+                        count += arg.apply_segments(fun);
+                    }
+                }
+            }
+
+            count + fun(segments)
+        }
+
+        match self {
+            Token::Path { segments } => apply_segment_generics(segments, fun),
+            Token::QualifiedPath {
+                qualified_type,
+                trait_path,
+                associated_segments,
+            } => {
+                let mut count = 0;
+                count += qualified_type.apply_segments(fun);
+
+                if let Some(trait_path) = trait_path {
+                    count += trait_path.apply_segments(fun);
+                }
+
+                count + apply_segment_generics(associated_segments, fun)
+            }
+            Token::Tuple { elements } => {
+                let mut count = 0;
+                for element in elements {
+                    count += element.apply_segments(fun);
+                }
+                count
+            }
+            Token::Slice { element } => element.apply_segments(fun),
+            Token::Reference { inner, .. } => inner.apply_segments(fun),
+            Token::DynamicTraitObject {
+                principal_trait,
+                additional_traits,
+            } => {
+                let mut count = 0;
+                count += principal_trait.apply_segments(fun);
+                for additional_trait in additional_traits {
+                    count += additional_trait.apply_segments(fun);
+                }
+                count
+            }
+            Token::AssociatedTypeBinding { value, .. } => value.apply_segments(fun),
+            Token::Unit => 0,
+        }
     }
 
     pub fn erase_trait_names(&mut self) -> usize {
@@ -192,11 +253,7 @@ impl Token<'_> {
                 return 0;
             };
 
-            let [
-                path_segment!("core"),
-                path_segment!("result"),
-                path_segment!("Result", generic_args),
-            ] = segments.as_mut_slice()
+            let [ps!("core"), ps!("result"), ps!("Result", generic_args)] = segments.as_mut_slice()
             else {
                 return 0;
             };
@@ -209,6 +266,59 @@ impl Token<'_> {
             1
         })
     }
+
+    pub fn collapse_closures(&mut self) -> usize {
+        fn idx<'a>(segment: &'a PathSegment<'a>) -> Option<&'a str> {
+            let PathSegmentName::Synthetic(name) = &segment.name else {
+                return None;
+            };
+
+            name.strip_prefix("closure#")
+        }
+
+        self.apply_segments(&mut |segments| {
+            let mut changed = 0;
+            let mut left = 0;
+
+            while left < segments.len() {
+                let Some(first_index) = idx(&segments[left]) else {
+                    left += 1;
+                    continue;
+                };
+
+                let mut right = left + 1;
+                let mut indices = vec![first_index];
+
+                while right < segments.len() {
+                    let Some(index) = idx(&segments[right]) else {
+                        break;
+                    };
+                    indices.push(index);
+                    right += 1;
+                }
+
+                if indices.len() < 2 {
+                    left += 1;
+                    continue;
+                }
+
+                let merged = format!("closures#{{{}}}", indices.join(","));
+
+                segments.splice(
+                    left..right,
+                    [PathSegment {
+                        name: PathSegmentName::Synthetic(Cow::Owned(merged)),
+                        generic_args: None,
+                    }],
+                );
+
+                changed += 1;
+                left += 1;
+            }
+
+            changed
+        })
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -218,8 +328,8 @@ pub struct PathSegment<'a> {
 }
 
 impl<'a> PathSegment<'a> {
-    pub fn ident(&self) -> Option<&'a str> {
-        match self.name {
+    pub fn ident(&'a self) -> Option<&'a str> {
+        match &self.name {
             PathSegmentName::Identifier(name) => Some(name),
             PathSegmentName::Synthetic(_) => None,
         }
@@ -232,8 +342,8 @@ impl<'a> PathSegment<'a> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PathSegmentName<'a> {
-    Identifier(&'a str),
-    Synthetic(&'a str),
+    Identifier(Cow<'a, str>),
+    Synthetic(Cow<'a, str>),
 }
 
 impl fmt::Display for Token<'_> {
@@ -366,8 +476,12 @@ fn parse_synthetic_name(input: &str) -> IResult<&str, &str> {
 
 fn parse_path_segment_name(input: &str) -> IResult<&str, PathSegmentName<'_>> {
     alt((
-        map(parse_synthetic_name, PathSegmentName::Synthetic),
-        map(parse_identifier, PathSegmentName::Identifier),
+        map(parse_synthetic_name, |x| {
+            PathSegmentName::Synthetic(Cow::Borrowed(x))
+        }),
+        map(parse_identifier, |x| {
+            PathSegmentName::Identifier(Cow::Borrowed(x))
+        }),
     ))
     .parse(input)
 }
@@ -775,15 +889,16 @@ rayon_core
         token.erase_trait_names();
         token.downgrade_qpath();
         token.erase_result_ok_type();
+        token.collapse_closures();
 
         assert_eq!(
             format!("{token}"),
             "rayon_core::scope::scope<\
                 svclib::taskutil::ThreadPool::spawn<\
-                    symdb::symdb::SymDb::fetch_from_debuginfod::{closure#0}::{closure#0}::{closure#0}::{closure#0}, \
+                    symdb::symdb::SymDb::fetch_from_debuginfod::{closures#{0,0,0,0}}, \
                     gsym::writer::Writer, \
                     anyhow::Error\
-                >::{closure#0}::{closure#0}::{closure#0}, gsym::writer::Writer\
+                >::{closures#{0,0,0}}, gsym::writer::Writer\
             >::{closure#0}"
         );
 
