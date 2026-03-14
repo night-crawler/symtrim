@@ -89,7 +89,7 @@ def pretty_rust_path(s: str, indent: str = "    ") -> str:
 
 if __name__ == "__main__":
     s = r"""
-    <gimli::read::unit::EntriesCursor<gimli::read::endian_slice::EndianSlice<gimli::endianity::LittleEndian>>>::next_entry
+    <tracing::instrument::Instrumented<<alloc::boxed::Box<dyn objstore::Bucket + core::marker::Sync + core::marker::Send> as objstore::BucketExt>::get_object_into_tempfile::{closure#0}::{closure#0}> as core::future::future::Future>::poll
     """
 
     print(pretty_rust_path(s))

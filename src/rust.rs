@@ -340,12 +340,67 @@ impl Token<'_> {
         })
     }
 
+    fn is_marker_trait(&self) -> bool {
+        let Token::Path { segments } = self else {
+            return false;
+        };
+
+        let [prefix, marker, trait_name] = segments.as_slice() else {
+            return false;
+        };
+
+        if !matches!(prefix.ident(), Some("core" | "std")) {
+            return false;
+        }
+
+        if !marker.is_ident("marker") {
+            return false;
+        }
+
+        trait_name.generic_args.is_none()
+    }
+
+    pub fn erase_marker_traits(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let Token::DynamicTraitObject {
+                principal_trait,
+                additional_traits,
+            } = token
+            else {
+                return 0;
+            };
+
+            let mut changed = 0;
+
+            additional_traits.retain(|t| {
+                let keep = !t.is_marker_trait();
+                changed += usize::from(!keep);
+                keep
+            });
+
+            if principal_trait.is_marker_trait() {
+                changed += 1;
+
+                if additional_traits.is_empty() {
+                    *token = Token::Unit;
+                    return changed;
+                }
+
+                let new_principal = additional_traits.remove(0);
+                *principal_trait = Box::new(new_principal);
+            }
+
+            changed
+        })
+    }
+
     pub fn erase_all(&mut self) -> usize {
         self.erase_trait_names()
             + self.downgrade_qpath()
             + self.unwrap_result()
             + self.unwrap_option()
             + self.collapse_closures()
+            + self.erase_marker_traits()
     }
 }
 
@@ -1154,6 +1209,33 @@ core
         token.unwrap_option();
 
         assert_eq!(format!("{token}"), "core::num::nonzero::NonZero<u64>");
+        Ok(())
+    }
+
+    #[test]
+    fn erase_marker() -> TestResult {
+        let t = r#"
+<
+    tracing::instrument::Instrumented<
+        <
+            alloc::boxed::Box<
+                dyn objstore::Bucket + core::marker::Sync + core::marker::Send
+            > as objstore::BucketExt
+        >::get_object_into_tempfile::{closure#0}::{closure#0}
+    > as core::future::future::Future
+>
+::poll
+        "#;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_all();
+
+        assert_eq!(
+            format!("{token}"),
+            "tracing::instrument::Instrumented<\
+                alloc::boxed::Box<dyn objstore::Bucket>::get_object_into_tempfile::{closures#{0,0}}>::poll"
+        );
+
         Ok(())
     }
 }
