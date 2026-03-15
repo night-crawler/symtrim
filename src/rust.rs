@@ -582,47 +582,111 @@ impl<'a> Token<'a> {
             changed
         })
     }
-    fn split_single_arg_wrapper(&self) -> Option<(Token<'a>, &Token<'a>)> {
+
+    fn chain_args(&self) -> Option<&[Token<'a>]> {
         let Token::Path { segments } = self else {
             return None;
         };
 
-        let (last, prefix) = segments.split_last()?;
-        let Some([only_generic]) = last.generics.as_deref() else {
+        let [segment] = segments.as_slice() else {
             return None;
         };
 
-        // Can't compress anything but the last generic, so if we have generics on a path to the
-        // last, then bail.
-        if prefix.iter().any(|segment| segment.generics.is_some()) {
+        if !segment.is_ident("CHAIN") {
             return None;
         }
 
-        let mut segments = prefix.to_vec();
-        segments.push(PathSegment {
-            name: last.name.clone(),
-            generics: None,
-        });
+        segment.generics.as_deref()
+    }
 
-        Some((Token::Path { segments }, only_generic))
+    fn split_single_arg_path(&self) -> Option<(Token<'a>, &Token<'a>, Vec<PathSegment<'a>>)> {
+        let Token::Path { segments } = self else {
+            return None;
+        };
+
+        let mut generic_segments = segments
+            .iter()
+            .enumerate()
+            .filter(|(_, segment)| segment.generics.is_some());
+
+        let (split_index, split_segment) = generic_segments.next()?;
+
+        if generic_segments.next().is_some() {
+            return None;
+        }
+
+        let Some([only_generic]) = split_segment.generics.as_deref() else {
+            return None;
+        };
+
+        Some((
+            Token::Path {
+                segments: segments[..split_index]
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(PathSegment {
+                        name: split_segment.name.clone(),
+                        generics: None,
+                    }))
+                    .collect(),
+            },
+            only_generic,
+            segments[split_index + 1..].to_vec(),
+        ))
     }
 
     pub fn collapse_single_arg_chain(&mut self) -> usize {
         self.visit(&mut |token| {
-            let mut path = Vec::new();
+            let mut parts = Vec::new();
             let mut current: &Token<'_> = token;
+            let mut outer_suffix: Option<Vec<PathSegment<'a>>> = None;
 
-            while let Some((path_part, inner)) = current.split_single_arg_wrapper() {
-                path.push(path_part);
+            while let Some((path_part, inner, suffix)) = current.split_single_arg_path() {
+                parts.push(path_part);
+
+                if outer_suffix.is_none() {
+                    outer_suffix = Some(suffix);
+                }
+
                 current = inner;
             }
 
-            if path.len() < 3 {
+            let mut flattened = match current.chain_args() {
+                Some(existing) => {
+                    parts.extend(existing.iter().cloned());
+                    true
+                }
+                None => false,
+            };
+
+            if !flattened {
+                if parts.len() < 3 {
+                    return 0;
+                }
+
+                parts.push(current.clone());
+                flattened = true;
+            }
+
+            if !flattened {
                 return 0;
             }
 
-            path.push(current.clone());
-            *token = make_chain(path);
+            let mut new_token = Token::Path {
+                segments: vec![PathSegment {
+                    name: PathSegmentName::Identifier(Cow::Borrowed("CHAIN")),
+                    generics: Some(parts),
+                }],
+            };
+
+            if let Some(suffix) = outer_suffix {
+                let Token::Path { segments } = &mut new_token else {
+                    unreachable!();
+                };
+                segments.extend(suffix);
+            }
+
+            *token = new_token;
             1
         })
     }
@@ -668,15 +732,6 @@ impl<'a> Token<'a> {
         };
 
         matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generics.is_none())
-    }
-}
-
-fn make_chain<'a>(path: Vec<Token<'a>>) -> Token<'a> {
-    Token::Path {
-        segments: vec![PathSegment {
-            name: PathSegmentName::Identifier(Cow::Borrowed("CHAIN")),
-            generics: Some(path),
-        }],
     }
 }
 
@@ -1571,7 +1626,7 @@ axum::util::MapIntoResponseFuture<
 
         assert_eq!(
             format!("{token}"),
-            "axum::util::MapIntoResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>::poll"
+            "CHAIN<axum::util::MapIntoResponseFuture, Box, Future, http::response::Response, tonic::body::Body>::poll"
         );
 
         println!("{:#?}", token);
