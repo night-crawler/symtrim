@@ -565,6 +565,7 @@ impl<'a> Token<'a> {
             + self.erase_well_known_paths()
             + self.erase_placeholder_generics()
             + self.collapse_single_arg_chain()
+            + self.erase_prefixes_for_recognizable_names()
     }
 
     fn is_marker_trait(&self) -> bool {
@@ -603,10 +604,7 @@ impl<'a> Token<'a> {
                 .all(|(segment, expected)| segment.is_ident(expected))
     }
 
-    fn erase_path_prefix_in_segments(
-        segments: &mut Vec<PathSegment<'_>>,
-        paths: &[&[&str]],
-    ) -> bool {
+    fn erase_path_prefix(segments: &mut Vec<PathSegment<'_>>, paths: &[&[&str]]) -> bool {
         if segments.len() <= 1 {
             return false;
         }
@@ -624,13 +622,39 @@ impl<'a> Token<'a> {
     }
 
     pub fn erase_path_prefixes(&mut self, paths: &[&[&str]]) -> usize {
-        self.visit_segments(&mut |segments| {
-            usize::from(Self::erase_path_prefix_in_segments(segments, paths))
-        })
+        self.visit_segments(&mut |segments| usize::from(Self::erase_path_prefix(segments, paths)))
     }
 
     pub fn erase_well_known_paths(&mut self) -> usize {
         self.erase_path_prefixes(WELL_KNOWN_PATHS)
+    }
+
+    fn erase_prefix_in_segments(segments: &mut Vec<PathSegment<'_>>, expected: &str) -> bool {
+        if segments.len() <= 1 {
+            return false;
+        }
+
+        if !matches!(segments.last(), Some(last) if last.is_ident(expected)) {
+            return false;
+        }
+
+        segments.drain(..segments.len() - 1);
+        true
+    }
+
+    pub fn erase_prefix_for(&mut self, expected: &str) -> usize {
+        self.visit_segments(&mut |segments| {
+            usize::from(Self::erase_prefix_in_segments(segments, expected))
+        })
+    }
+
+    pub fn erase_prefixes_for_recognizable_names(&mut self) -> usize {
+        self.erase_prefix_for("EitherResponseFuture")
+        + self.erase_prefix_for("Response")
+        + self.erase_prefix_for("Request")
+        + self.erase_prefix_for("Body")
+        + self.erase_prefix_for("quicksort")
+        + self.erase_prefix_for("NonZero")
     }
 }
 
@@ -1025,6 +1049,11 @@ core
         "#;
 
         roundtrip(t)?;
+
+        let (_, mut token) = parse(t)?;
+        token.erase_all();
+
+        println!("{}", token);
 
         Ok(())
     }
