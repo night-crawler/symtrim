@@ -14,13 +14,13 @@ macro_rules! ps {
     ($name:pat) => {
         PathSegment {
             name: PathSegmentName::Identifier(Cow::Borrowed($name)),
-            generic_args: None,
+            generics: None,
         }
     };
     ($name:pat, $generic_args:pat) => {
         PathSegment {
             name: PathSegmentName::Identifier(Cow::Borrowed($name)),
-            generic_args: Some($generic_args),
+            generics: Some($generic_args),
         }
     };
 }
@@ -63,13 +63,13 @@ pub enum Token<'a> {
     Unit,
 }
 
-impl Token<'_> {
+impl<'a> Token<'a> {
     fn visit(&mut self, fun: &mut impl FnMut(&mut Self) -> usize) -> usize {
         let mut count = 0;
         match self {
             Token::Path { segments } => {
                 for segment in segments {
-                    if let Some(generic_args) = &mut segment.generic_args {
+                    if let Some(generic_args) = &mut segment.generics {
                         for arg in generic_args {
                             count += arg.visit(fun);
                         }
@@ -89,7 +89,7 @@ impl Token<'_> {
                 }
 
                 for segment in associated_segments {
-                    if let Some(generic_args) = &mut segment.generic_args {
+                    if let Some(generic_args) = &mut segment.generics {
                         for arg in generic_args {
                             count += arg.visit(fun);
                         }
@@ -142,7 +142,7 @@ impl Token<'_> {
             let mut count = 0;
 
             for segment in segments.iter_mut() {
-                if let Some(generic_args) = &mut segment.generic_args {
+                if let Some(generic_args) = &mut segment.generics {
                     for arg in generic_args {
                         count += arg.visit_segments(fun);
                     }
@@ -334,7 +334,7 @@ impl Token<'_> {
                     left..right,
                     [PathSegment {
                         name: PathSegmentName::Synthetic(Cow::Owned(merged)),
-                        generic_args: None,
+                        generics: None,
                     }],
                 );
 
@@ -402,7 +402,7 @@ impl Token<'_> {
 
             let mut count = 0;
             for segment in segments {
-                let Some(generic_args) = &mut segment.generic_args else {
+                let Some(generic_args) = &mut segment.generics else {
                     continue;
                 };
 
@@ -411,7 +411,7 @@ impl Token<'_> {
                     continue;
                 };
 
-                segment.generic_args = Some(vec![std::mem::replace(value.as_mut(), Token::Unit)]);
+                segment.generics = Some(vec![std::mem::replace(value.as_mut(), Token::Unit)]);
                 count += 1
             }
 
@@ -569,17 +569,61 @@ impl Token<'_> {
             let mut changed = 0;
 
             for segment in segments {
-                let Some(generic_args) = &segment.generic_args else {
+                let Some(generic_args) = &segment.generics else {
                     continue;
                 };
 
                 if matches!(generic_args.as_slice(), [arg] if arg.is_placeholder_type()) {
-                    segment.generic_args = None;
+                    segment.generics = None;
                     changed += 1;
                 }
             }
 
             changed
+        })
+    }
+    fn split_single_arg_wrapper(&self) -> Option<(Token<'a>, &Token<'a>)> {
+        let Token::Path { segments } = self else {
+            return None;
+        };
+
+        let (last, prefix) = segments.split_last()?;
+        let Some([only_generic]) = last.generics.as_deref() else {
+            return None;
+        };
+
+        // Can't compress anything but the last generic, so if we have generics on a path to the
+        // last, then bail.
+        if prefix.iter().any(|segment| segment.generics.is_some()) {
+            return None;
+        }
+
+        let mut segments = prefix.to_vec();
+        segments.push(PathSegment {
+            name: last.name.clone(),
+            generics: None,
+        });
+
+        Some((Token::Path { segments }, only_generic))
+    }
+
+    pub fn collapse_single_arg_chain(&mut self) -> usize {
+        self.visit(&mut |token| {
+            let mut path = Vec::new();
+            let mut current: &Token<'_> = token;
+
+            while let Some((path_part, inner)) = current.split_single_arg_wrapper() {
+                path.push(path_part);
+                current = inner;
+            }
+
+            if path.len() < 3 {
+                return 0;
+            }
+
+            path.push(current.clone());
+            *token = make_chain(path);
+            1
         })
     }
 
@@ -595,6 +639,7 @@ impl Token<'_> {
             + self.unwrap_pin()
             + self.erase_well_known_paths()
             + self.erase_placeholder_generics()
+            + self.collapse_single_arg_chain()
     }
 
     fn is_marker_trait(&self) -> bool {
@@ -614,7 +659,7 @@ impl Token<'_> {
             return false;
         }
 
-        trait_name.generic_args.is_none()
+        trait_name.generics.is_none()
     }
 
     fn is_placeholder_type(&self) -> bool {
@@ -622,14 +667,23 @@ impl Token<'_> {
             return false;
         };
 
-        matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generic_args.is_none())
+        matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generics.is_none())
+    }
+}
+
+fn make_chain<'a>(path: Vec<Token<'a>>) -> Token<'a> {
+    Token::Path {
+        segments: vec![PathSegment {
+            name: PathSegmentName::Identifier(Cow::Borrowed("CHAIN")),
+            generics: Some(path),
+        }],
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PathSegment<'a> {
     pub name: PathSegmentName<'a>,
-    pub generic_args: Option<Vec<Token<'a>>>,
+    pub generics: Option<Vec<Token<'a>>>,
 }
 
 impl<'a> PathSegment<'a> {
@@ -731,7 +785,7 @@ impl fmt::Display for PathSegment<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.name)?;
 
-        if let Some(generic_args) = &self.generic_args {
+        if let Some(generic_args) = &self.generics {
             write!(formatter, "<")?;
             for (index, arg) in generic_args.iter().enumerate() {
                 if index > 0 {
@@ -830,7 +884,13 @@ fn parse_path_segment(input: &str) -> IResult<&str, PathSegment<'_>> {
     let (remainder, name) = parse_path_segment_name(input)?;
     let (remainder, generic_args) = opt(parse_segment_generic_arguments).parse(remainder)?;
 
-    Ok((remainder, PathSegment { name, generic_args }))
+    Ok((
+        remainder,
+        PathSegment {
+            name,
+            generics: generic_args,
+        },
+    ))
 }
 
 fn parse_unit_or_tuple_type(input: &str) -> IResult<&str, Token<'_>> {
@@ -1513,6 +1573,8 @@ axum::util::MapIntoResponseFuture<
             format!("{token}"),
             "axum::util::MapIntoResponseFuture<Box<Future<http::response::Response<tonic::body::Body>>>>::poll"
         );
+
+        println!("{:#?}", token);
 
         Ok(())
     }
