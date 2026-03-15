@@ -1,12 +1,12 @@
-use std::borrow::Cow;
+use crate::rust::{PathSegment, PathSegmentName, Token};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while, take_while1};
 use nom::character::complete::{char, multispace0};
 use nom::combinator::{all_consuming, map, opt, recognize};
-use nom::{IResult, Parser};
 use nom::multi::{many0, separated_list0, separated_list1};
 use nom::sequence::{delimited, pair, preceded};
-use crate::rust::{PathSegment, PathSegmentName, Token};
+use nom::{IResult, Parser};
+use std::borrow::Cow;
 
 fn is_identifier_start(character: char) -> bool {
     character == '_' || character.is_ascii_alphabetic()
@@ -25,7 +25,7 @@ fn parse_identifier(input: &str) -> IResult<&str, &str> {
         take_while1(is_identifier_start),
         take_while(is_identifier_continue),
     ))
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_synthetic_name(input: &str) -> IResult<&str, &str> {
@@ -41,7 +41,7 @@ fn parse_path_segment_name(input: &str) -> IResult<&str, PathSegmentName<'_>> {
             PathSegmentName::Identifier(Cow::Borrowed(x))
         }),
     ))
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_associated_type_binding(input: &str) -> IResult<&str, Token<'_>> {
@@ -55,7 +55,7 @@ fn parse_associated_type_binding(input: &str) -> IResult<&str, Token<'_>> {
             value: Box::new(value),
         },
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_generic_argument(input: &str) -> IResult<&str, Token<'_>> {
@@ -68,7 +68,7 @@ fn parse_generic_arguments(input: &str) -> IResult<&str, Vec<Token<'_>>> {
         separated_list0(ws(char(',')), parse_generic_argument),
         ws(char('>')),
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_segment_generic_arguments(input: &str) -> IResult<&str, Vec<Token<'_>>> {
@@ -76,7 +76,7 @@ fn parse_segment_generic_arguments(input: &str) -> IResult<&str, Vec<Token<'_>>>
         parse_generic_arguments,
         preceded(ws(tag("::")), parse_generic_arguments),
     ))
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_path_segment(input: &str) -> IResult<&str, PathSegment<'_>> {
@@ -107,7 +107,7 @@ fn parse_unit_or_tuple_type(input: &str) -> IResult<&str, Token<'_>> {
             }
         },
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_slice_type(input: &str) -> IResult<&str, Token<'_>> {
@@ -117,7 +117,7 @@ fn parse_slice_type(input: &str) -> IResult<&str, Token<'_>> {
             element: Box::new(element),
         },
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_reference_type(input: &str) -> IResult<&str, Token<'_>> {
@@ -134,7 +134,7 @@ fn parse_reference_type(input: &str) -> IResult<&str, Token<'_>> {
             inner: Box::new(inner),
         },
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_dynamic_trait_object(input: &str) -> IResult<&str, Token<'_>> {
@@ -151,7 +151,7 @@ fn parse_dynamic_trait_object(input: &str) -> IResult<&str, Token<'_>> {
             additional_traits,
         },
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_regular_path(input: &str) -> IResult<&str, Token<'_>> {
@@ -159,7 +159,7 @@ fn parse_regular_path(input: &str) -> IResult<&str, Token<'_>> {
         separated_list1(ws(tag("::")), parse_path_segment),
         |segments| Token::Path { segments },
     )
-        .parse(input)
+    .parse(input)
 }
 
 fn parse_qualified_path(input: &str) -> IResult<&str, Token<'_>> {
@@ -190,7 +190,7 @@ fn parse_type_expression(input: &str) -> IResult<&str, Token<'_>> {
         parse_slice_type,
         parse_regular_path,
     )))
-        .parse(input)
+    .parse(input)
 }
 
 fn ws<'a, O, P>(inner: P) -> impl Parser<&'a str, Output = O, Error = nom::error::Error<&'a str>>
@@ -199,7 +199,6 @@ where
 {
     delimited(multispace0, inner, multispace0)
 }
-
 
 pub fn parse(input: &str) -> IResult<&str, Token<'_>> {
     all_consuming(ws(parse_type_expression)).parse(input)

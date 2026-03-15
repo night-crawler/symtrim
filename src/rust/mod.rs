@@ -650,11 +650,11 @@ impl<'a> Token<'a> {
 
     pub fn erase_prefixes_for_recognizable_names(&mut self) -> usize {
         self.erase_prefix_for("EitherResponseFuture")
-        + self.erase_prefix_for("Response")
-        + self.erase_prefix_for("Request")
-        + self.erase_prefix_for("Body")
-        + self.erase_prefix_for("quicksort")
-        + self.erase_prefix_for("NonZero")
+            + self.erase_prefix_for("Response")
+            + self.erase_prefix_for("Request")
+            + self.erase_prefix_for("Body")
+            + self.erase_prefix_for("quicksort")
+            + self.erase_prefix_for("NonZero")
     }
 }
 
