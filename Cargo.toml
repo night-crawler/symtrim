@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 nom = { version = "8", features = ["std"] }
+thiserror = "2"
 
 [dev-dependencies]
 testresult = "0.4.1"

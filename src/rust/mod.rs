@@ -1,12 +1,5 @@
-use nom::{
-    IResult, Parser,
-    branch::alt,
-    bytes::complete::{tag, take_while, take_while1},
-    character::complete::{char, multispace0},
-    combinator::{all_consuming, map, opt, recognize},
-    multi::{many0, separated_list0, separated_list1},
-    sequence::{delimited, pair, preceded},
-};
+mod parse;
+
 use std::borrow::Cow;
 use std::fmt;
 
@@ -61,6 +54,15 @@ pub enum Token<'a> {
     },
 
     Unit,
+}
+
+impl<'a> TryFrom<&'a str> for Token<'a> {
+    type Error = nom::Err<nom::error::Error<&'a str>>;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let (_, res) = parse::parse(value)?;
+        Ok(res)
+    }
 }
 
 impl<'a> Token<'a> {
@@ -419,147 +421,6 @@ impl<'a> Token<'a> {
         })
     }
 
-    fn erase_path_prefix(segments: &mut Vec<PathSegment<'_>>) -> bool {
-        fn matches_path(segments: &[PathSegment<'_>], expected: &[&str]) -> bool {
-            segments.len() == expected.len()
-                && segments
-                    .iter()
-                    .zip(expected)
-                    .all(|(segment, expected)| segment.is_ident(expected))
-        }
-
-        fn strip_prefix(segments: &mut Vec<PathSegment<'_>>) -> bool {
-            if segments.len() <= 1 {
-                return false;
-            }
-
-            segments.drain(..segments.len() - 1);
-            true
-        }
-
-        let Some(last) = segments.last().and_then(PathSegment::ident) else {
-            return false;
-        };
-
-        let matched = match last {
-            "Vec" => {
-                matches_path(segments, &["std", "vec", "Vec"])
-                    || matches_path(segments, &["alloc", "vec", "Vec"])
-            }
-
-            "String" => {
-                matches_path(segments, &["std", "string", "String"])
-                    || matches_path(segments, &["alloc", "string", "String"])
-            }
-
-            "str" => matches_path(segments, &["core", "primitive", "str"]),
-
-            "Option" => {
-                matches_path(segments, &["std", "option", "Option"])
-                    || matches_path(segments, &["core", "option", "Option"])
-            }
-
-            "Result" => {
-                matches_path(segments, &["std", "result", "Result"])
-                    || matches_path(segments, &["core", "result", "Result"])
-            }
-
-            "Box" => {
-                matches_path(segments, &["std", "boxed", "Box"])
-                    || matches_path(segments, &["alloc", "boxed", "Box"])
-            }
-
-            "HashMap" => matches_path(segments, &["std", "collections", "HashMap"]),
-            "HashSet" => matches_path(segments, &["std", "collections", "HashSet"]),
-            "BTreeMap" => matches_path(segments, &["std", "collections", "BTreeMap"]),
-            "BTreeSet" => matches_path(segments, &["std", "collections", "BTreeSet"]),
-            "VecDeque" => matches_path(segments, &["std", "collections", "VecDeque"]),
-            "BinaryHeap" => matches_path(segments, &["std", "collections", "BinaryHeap"]),
-            "LinkedList" => matches_path(segments, &["std", "collections", "LinkedList"]),
-
-            "Rc" => matches_path(segments, &["std", "rc", "Rc"]),
-            "Arc" => matches_path(segments, &["std", "sync", "Arc"]),
-
-            "Cell" => matches_path(segments, &["std", "cell", "Cell"]),
-            "RefCell" => matches_path(segments, &["std", "cell", "RefCell"]),
-            "UnsafeCell" => matches_path(segments, &["std", "cell", "UnsafeCell"]),
-
-            "Mutex" => matches_path(segments, &["std", "sync", "Mutex"]),
-            "RwLock" => matches_path(segments, &["std", "sync", "RwLock"]),
-            "OnceLock" => matches_path(segments, &["std", "sync", "OnceLock"]),
-            "LazyLock" => matches_path(segments, &["std", "sync", "LazyLock"]),
-
-            "Cow" => {
-                matches_path(segments, &["std", "borrow", "Cow"])
-                    || matches_path(segments, &["alloc", "borrow", "Cow"])
-            }
-
-            "Path" => matches_path(segments, &["std", "path", "Path"]),
-            "PathBuf" => matches_path(segments, &["std", "path", "PathBuf"]),
-
-            "OsStr" => matches_path(segments, &["std", "ffi", "OsStr"]),
-            "OsString" => matches_path(segments, &["std", "ffi", "OsString"]),
-            "CStr" => matches_path(segments, &["std", "ffi", "CStr"]),
-            "CString" => matches_path(segments, &["std", "ffi", "CString"]),
-
-            "Pin" => {
-                matches_path(segments, &["std", "pin", "Pin"])
-                    || matches_path(segments, &["core", "pin", "Pin"])
-            }
-
-            "Duration" => matches_path(segments, &["std", "time", "Duration"]),
-            "Instant" => matches_path(segments, &["std", "time", "Instant"]),
-            "SystemTime" => matches_path(segments, &["std", "time", "SystemTime"]),
-
-            "Range" => matches_path(segments, &["std", "ops", "Range"]),
-            "RangeInclusive" => matches_path(segments, &["std", "ops", "RangeInclusive"]),
-            "Bound" => matches_path(segments, &["std", "ops", "Bound"]),
-
-            "IpAddr" => matches_path(segments, &["std", "net", "IpAddr"]),
-            "Ipv4Addr" => matches_path(segments, &["std", "net", "Ipv4Addr"]),
-            "Ipv6Addr" => matches_path(segments, &["std", "net", "Ipv6Addr"]),
-            "SocketAddr" => matches_path(segments, &["std", "net", "SocketAddr"]),
-
-            "NonZeroUsize" => matches_path(segments, &["std", "num", "NonZeroUsize"]),
-            "NonZeroU64" => matches_path(segments, &["std", "num", "NonZeroU64"]),
-
-            "NonNull" => matches_path(segments, &["std", "ptr", "NonNull"]),
-            "PhantomData" => matches_path(segments, &["std", "marker", "PhantomData"]),
-            "MaybeUninit" => matches_path(segments, &["std", "mem", "MaybeUninit"]),
-
-            "Poll" => {
-                matches_path(segments, &["std", "task", "Poll"])
-                    || matches_path(segments, &["core", "task", "Poll"])
-            }
-
-            "Context" => {
-                matches_path(segments, &["std", "task", "Context"])
-                    || matches_path(segments, &["core", "task", "Context"])
-            }
-
-            "Waker" => {
-                matches_path(segments, &["std", "task", "Waker"])
-                    || matches_path(segments, &["core", "task", "Waker"])
-            }
-
-            "Future" => {
-                matches_path(segments, &["std", "future", "Future"])
-                    || matches_path(segments, &["core", "future", "future", "Future"])
-            }
-
-            "Sender" => matches_path(segments, &["std", "sync", "mpsc", "Sender"]),
-            "Receiver" => matches_path(segments, &["std", "sync", "mpsc", "Receiver"]),
-
-            _ => false,
-        };
-
-        matched && strip_prefix(segments)
-    }
-
-    pub fn erase_well_known_paths(&mut self) -> usize {
-        self.visit_segments(&mut |segments| usize::from(Self::erase_path_prefix(segments)))
-    }
-
     pub fn erase_placeholder_generics(&mut self) -> usize {
         self.visit(&mut |token| {
             let Token::Path { segments } = token else {
@@ -733,6 +594,44 @@ impl<'a> Token<'a> {
 
         matches!(segments.as_slice(), [segment] if segment.is_ident("_") && segment.generics.is_none())
     }
+
+    fn matches_path(segments: &[PathSegment<'_>], expected: &[&str]) -> bool {
+        segments.len() == expected.len()
+            && segments
+                .iter()
+                .zip(expected.iter().copied())
+                .all(|(segment, expected)| segment.is_ident(expected))
+    }
+
+    fn erase_path_prefix_in_segments(
+        segments: &mut Vec<PathSegment<'_>>,
+        paths: &[&[&str]],
+    ) -> bool {
+        if segments.len() <= 1 {
+            return false;
+        }
+
+        if !paths
+            .iter()
+            .copied()
+            .any(|path| Self::matches_path(segments, path))
+        {
+            return false;
+        }
+
+        segments.drain(..segments.len() - 1);
+        true
+    }
+
+    pub fn erase_path_prefixes(&mut self, paths: &[&[&str]]) -> usize {
+        self.visit_segments(&mut |segments| {
+            usize::from(Self::erase_path_prefix_in_segments(segments, paths))
+        })
+    }
+
+    pub fn erase_well_known_paths(&mut self) -> usize {
+        self.erase_path_prefixes(WELL_KNOWN_PATHS)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -864,205 +763,74 @@ impl fmt::Display for PathSegmentName<'_> {
     }
 }
 
-fn is_identifier_start(character: char) -> bool {
-    character == '_' || character.is_ascii_alphabetic()
-}
-
-fn is_identifier_continue(character: char) -> bool {
-    character == '_' || character == '#' || character.is_ascii_alphanumeric()
-}
-
-fn is_synthetic_continue(character: char) -> bool {
-    character == '_' || character == '#' || character == ':' || character.is_ascii_alphanumeric()
-}
-
-fn parse_identifier(input: &str) -> IResult<&str, &str> {
-    recognize(pair(
-        take_while1(is_identifier_start),
-        take_while(is_identifier_continue),
-    ))
-    .parse(input)
-}
-
-fn parse_synthetic_name(input: &str) -> IResult<&str, &str> {
-    delimited(char('{'), take_while1(is_synthetic_continue), char('}')).parse(input)
-}
-
-fn parse_path_segment_name(input: &str) -> IResult<&str, PathSegmentName<'_>> {
-    alt((
-        map(parse_synthetic_name, |x| {
-            PathSegmentName::Synthetic(Cow::Borrowed(x))
-        }),
-        map(parse_identifier, |x| {
-            PathSegmentName::Identifier(Cow::Borrowed(x))
-        }),
-    ))
-    .parse(input)
-}
-
-fn parse_associated_type_binding(input: &str) -> IResult<&str, Token<'_>> {
-    map(
-        pair(
-            parse_identifier,
-            preceded(ws(char('=')), parse_type_expression),
-        ),
-        |(name, value)| Token::AssociatedTypeBinding {
-            name,
-            value: Box::new(value),
-        },
-    )
-    .parse(input)
-}
-
-fn parse_generic_argument(input: &str) -> IResult<&str, Token<'_>> {
-    alt((parse_associated_type_binding, parse_type_expression)).parse(input)
-}
-
-fn parse_generic_arguments(input: &str) -> IResult<&str, Vec<Token<'_>>> {
-    delimited(
-        ws(char('<')),
-        separated_list0(ws(char(',')), parse_generic_argument),
-        ws(char('>')),
-    )
-    .parse(input)
-}
-
-fn parse_segment_generic_arguments(input: &str) -> IResult<&str, Vec<Token<'_>>> {
-    alt((
-        parse_generic_arguments,
-        preceded(ws(tag("::")), parse_generic_arguments),
-    ))
-    .parse(input)
-}
-
-fn parse_path_segment(input: &str) -> IResult<&str, PathSegment<'_>> {
-    let (remainder, name) = parse_path_segment_name(input)?;
-    let (remainder, generic_args) = opt(parse_segment_generic_arguments).parse(remainder)?;
-
-    Ok((
-        remainder,
-        PathSegment {
-            name,
-            generics: generic_args,
-        },
-    ))
-}
-
-fn parse_unit_or_tuple_type(input: &str) -> IResult<&str, Token<'_>> {
-    map(
-        delimited(
-            ws(char('(')),
-            separated_list0(ws(char(',')), parse_type_expression),
-            ws(char(')')),
-        ),
-        |elements| {
-            if elements.is_empty() {
-                Token::Unit
-            } else {
-                Token::Tuple { elements }
-            }
-        },
-    )
-    .parse(input)
-}
-
-fn parse_slice_type(input: &str) -> IResult<&str, Token<'_>> {
-    map(
-        delimited(ws(char('[')), parse_type_expression, ws(char(']'))),
-        |element| Token::Slice {
-            element: Box::new(element),
-        },
-    )
-    .parse(input)
-}
-
-fn parse_reference_type(input: &str) -> IResult<&str, Token<'_>> {
-    map(
-        preceded(
-            ws(char('&')),
-            pair(
-                opt(preceded(multispace0, tag("mut"))),
-                parse_type_expression,
-            ),
-        ),
-        |(mutable_keyword, inner)| Token::Reference {
-            mutable: mutable_keyword.is_some(),
-            inner: Box::new(inner),
-        },
-    )
-    .parse(input)
-}
-
-fn parse_dynamic_trait_object(input: &str) -> IResult<&str, Token<'_>> {
-    map(
-        preceded(
-            ws(tag("dyn")),
-            pair(
-                parse_regular_path,
-                many0(preceded(ws(char('+')), parse_regular_path)),
-            ),
-        ),
-        |(principal_trait, additional_traits)| Token::DynamicTraitObject {
-            principal_trait: Box::new(principal_trait),
-            additional_traits,
-        },
-    )
-    .parse(input)
-}
-
-fn parse_regular_path(input: &str) -> IResult<&str, Token<'_>> {
-    map(
-        separated_list1(ws(tag("::")), parse_path_segment),
-        |segments| Token::Path { segments },
-    )
-    .parse(input)
-}
-
-fn parse_qualified_path(input: &str) -> IResult<&str, Token<'_>> {
-    let (remainder, _) = ws(char('<')).parse(input)?;
-    let (remainder, qualified_type) = parse_type_expression(remainder)?;
-    let (remainder, trait_path) =
-        opt(preceded(ws(tag("as")), parse_type_expression)).parse(remainder)?;
-    let (remainder, _) = ws(char('>')).parse(remainder)?;
-    let (remainder, associated_segments) =
-        many0(preceded(ws(tag("::")), parse_path_segment)).parse(remainder)?;
-
-    Ok((
-        remainder,
-        Token::QualifiedPath {
-            qualified_type: Box::new(qualified_type),
-            trait_path: trait_path.map(Box::new),
-            associated_segments,
-        },
-    ))
-}
-
-fn parse_type_expression(input: &str) -> IResult<&str, Token<'_>> {
-    ws(alt((
-        parse_reference_type,
-        parse_qualified_path,
-        parse_dynamic_trait_object,
-        parse_unit_or_tuple_type,
-        parse_slice_type,
-        parse_regular_path,
-    )))
-    .parse(input)
-}
-
-pub fn parse(input: &str) -> IResult<&str, Token<'_>> {
-    all_consuming(ws(parse_type_expression)).parse(input)
-}
-
-fn ws<'a, O, P>(inner: P) -> impl Parser<&'a str, Output = O, Error = nom::error::Error<&'a str>>
-where
-    P: Parser<&'a str, Output = O, Error = nom::error::Error<&'a str>>,
-{
-    delimited(multispace0, inner, multispace0)
-}
+const WELL_KNOWN_PATHS: &[&[&str]] = &[
+    &["std", "vec", "Vec"],
+    &["alloc", "vec", "Vec"],
+    &["std", "string", "String"],
+    &["alloc", "string", "String"],
+    &["core", "primitive", "str"],
+    &["std", "option", "Option"],
+    &["core", "option", "Option"],
+    &["std", "result", "Result"],
+    &["core", "result", "Result"],
+    &["std", "boxed", "Box"],
+    &["alloc", "boxed", "Box"],
+    &["std", "collections", "HashMap"],
+    &["std", "collections", "HashSet"],
+    &["std", "collections", "BTreeMap"],
+    &["std", "collections", "BTreeSet"],
+    &["std", "collections", "VecDeque"],
+    &["std", "collections", "BinaryHeap"],
+    &["std", "collections", "LinkedList"],
+    &["std", "rc", "Rc"],
+    &["std", "sync", "Arc"],
+    &["std", "cell", "Cell"],
+    &["std", "cell", "RefCell"],
+    &["std", "cell", "UnsafeCell"],
+    &["std", "sync", "Mutex"],
+    &["std", "sync", "RwLock"],
+    &["std", "sync", "OnceLock"],
+    &["std", "sync", "LazyLock"],
+    &["std", "borrow", "Cow"],
+    &["alloc", "borrow", "Cow"],
+    &["std", "path", "Path"],
+    &["std", "path", "PathBuf"],
+    &["std", "ffi", "OsStr"],
+    &["std", "ffi", "OsString"],
+    &["std", "ffi", "CStr"],
+    &["std", "ffi", "CString"],
+    &["std", "pin", "Pin"],
+    &["core", "pin", "Pin"],
+    &["std", "time", "Duration"],
+    &["std", "time", "Instant"],
+    &["std", "time", "SystemTime"],
+    &["std", "ops", "Range"],
+    &["std", "ops", "RangeInclusive"],
+    &["std", "ops", "Bound"],
+    &["std", "net", "IpAddr"],
+    &["std", "net", "Ipv4Addr"],
+    &["std", "net", "Ipv6Addr"],
+    &["std", "net", "SocketAddr"],
+    &["std", "num", "NonZeroUsize"],
+    &["std", "num", "NonZeroU64"],
+    &["std", "ptr", "NonNull"],
+    &["std", "marker", "PhantomData"],
+    &["std", "mem", "MaybeUninit"],
+    &["std", "task", "Poll"],
+    &["core", "task", "Poll"],
+    &["std", "task", "Context"],
+    &["core", "task", "Context"],
+    &["std", "task", "Waker"],
+    &["core", "task", "Waker"],
+    &["std", "future", "Future"],
+    &["core", "future", "future", "Future"],
+    &["std", "sync", "mpsc", "Sender"],
+    &["std", "sync", "mpsc", "Receiver"],
+];
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::parse::*;
     use testresult::TestResult;
 
     fn roundtrip(s: &str) -> TestResult<usize> {
